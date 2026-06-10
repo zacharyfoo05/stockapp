@@ -10,9 +10,9 @@
  *       PORT=4000 node server.js
  */
 
-const express = require("express");
-const cors = require("cors");
-const yahooFinance = require("yahoo-finance2").default;
+import express from "express";
+import cors from "cors";
+import yahooFinance from "yahoo-finance2";
 
 yahooFinance.setGlobalConfig({ validation: { logErrors: false } });
 
