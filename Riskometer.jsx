@@ -26,24 +26,33 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 // Covers all US (NYSE/NASDAQ) and SGX (.SI) stocks via Yahoo Finance.
 // ---------------------------------------------------------------------------
 export function createLiveProvider(baseUrl = "/api") {
+  // Always fall back to static data so search always shows results,
+  // even when Yahoo Finance rate-limits or the proxy has an error.
+  const fallback = createSampleProvider();
   return {
     async searchSymbols(query) {
       try {
         const r = await fetch(`${baseUrl}/search?q=${encodeURIComponent(query)}`);
-        if (!r.ok) return [];
-        return await r.json();
+        if (r.ok) {
+          const results = await r.json();
+          if (Array.isArray(results) && results.length > 0) return results;
+        }
       } catch {
-        return [];
+        // fall through
       }
+      return fallback.searchSymbols(query);
     },
     async getQuote(symbol) {
       try {
         const r = await fetch(`${baseUrl}/quote/${encodeURIComponent(symbol)}`);
-        if (!r.ok) return null;
-        return await r.json();
+        if (r.ok) {
+          const q = await r.json();
+          if (q && q.price) return q;
+        }
       } catch {
-        return null;
+        // fall through
       }
+      return fallback.getQuote(symbol);
     },
   };
 }
