@@ -172,8 +172,8 @@ async function quoteViaSummary(symbol) {
   };
 }
 
-// Fallback quote via the public chart endpoint (no crumb needed).
-// Beta/sector are best-effort from the search index.
+// Chart endpoint needs no crumb — works even while the session is rate-limited.
+// Returns live price + currency + name. Beta comes from quoteSummary if available.
 async function quoteViaChart(symbol) {
   const data = await yfGet(
     `${Q1}/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1d`,
@@ -184,37 +184,44 @@ async function quoteViaChart(symbol) {
 
   let name = meta.longName || meta.shortName || symbol;
   let sector = "Other";
+  let beta = 1.0;
+
+  // Try to enrich with beta+sector from quoteSummary (needs session).
+  // Silently skip if session is not yet ready.
+  if (session) {
+    try {
+      const q = await quoteViaSummary(symbol);
+      if (q) return q; // got everything in one shot
+    } catch {
+      // session not ready yet — price-only is still useful
+    }
+  }
+
+  // Best-effort name/sector from the crumb-free search endpoint
   try {
     const hits = await searchYahoo(symbol);
     const exact = hits.find((h) => h.symbol === symbol) || hits[0];
-    if (exact) {
-      name = exact.name;
-      sector = exact.sector;
-    }
+    if (exact) { name = exact.name; sector = exact.sector; }
   } catch {
     // decorative
   }
+
   return {
     symbol,
     name,
     price: meta.regularMarketPrice,
-    beta: 1.0,
+    beta,
     sector,
     exchange: exchangeOf(symbol),
     currency: meta.currency || (symbol.endsWith(".SI") ? "SGD" : "USD"),
   };
 }
 
+// Always try chart first (no crumb needed = works even when rate-limited).
+// quoteSummary is only used as a second attempt inside quoteViaChart once
+// a session is established, so we never need two separate code paths here.
 function getQuote(symbol) {
-  return cached(`quote:${symbol}`, 5 * MIN, async () => {
-    try {
-      const q = await quoteViaSummary(symbol);
-      if (q) return q;
-    } catch (err) {
-      console.log(`quoteSummary failed for ${symbol} (${err.message}) — trying chart`);
-    }
-    return quoteViaChart(symbol);
-  });
+  return cached(`quote:${symbol}`, 5 * MIN, () => quoteViaChart(symbol));
 }
 
 // ---------------------------------------------------------------------------
@@ -255,9 +262,24 @@ app.get("/api/quote/:symbol", async (req, res) => {
   res.status(404).json({ error: lastErr?.message || "Symbol not found" });
 });
 
+// Retry session init with backoff until it succeeds.
+// Prices come from the chart endpoint in the meantime — no quotes are blocked.
+function scheduleSessionRetry(delayMs = 30_000) {
+  setTimeout(async () => {
+    try {
+      await initSession(true);
+    } catch (err) {
+      const next = Math.min(delayMs * 2, 10 * 60_000); // cap at 10 min
+      console.log(`Session retry in ${Math.round(next / 1000)}s (${err.message})`);
+      scheduleSessionRetry(next);
+    }
+  }, delayMs);
+}
+
 app.listen(PORT, () => {
   console.log(`Riskometer proxy listening on http://localhost:${PORT}`);
-  initSession().catch((err) =>
-    console.log(`Yahoo session pending (${err.message}) — will retry on demand`)
-  );
+  initSession().catch((err) => {
+    console.log(`Yahoo session pending (${err.message}) — prices still work via chart, retrying…`);
+    scheduleSessionRetry();
+  });
 });
