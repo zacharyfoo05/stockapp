@@ -560,7 +560,15 @@ function computePortfolio(holdings) {
       weight: totalValue > 0 ? value / totalValue : 0,
     };
   });
-  const portfolioBeta = rows.reduce((sum, r) => sum + r.beta * r.weight, 0);
+  // Weighted beta over holdings that actually have a beta; renormalise so a
+  // missing beta doesn't get silently treated as 0. Never invents a number.
+  const betaRows = rows.filter((r) => typeof r.beta === "number");
+  const betaWeight = betaRows.reduce((sum, r) => sum + r.weight, 0);
+  const portfolioBeta =
+    betaWeight > 0
+      ? betaRows.reduce((sum, r) => sum + r.beta * r.weight, 0) / betaWeight
+      : null;
+  const betaMissing = rows.length - betaRows.length;
 
   const sectorMap = {};
   for (const r of rows) sectorMap[r.sector] = (sectorMap[r.sector] || 0) + r.weight;
@@ -571,7 +579,7 @@ function computePortfolio(holdings) {
   const topHolding = rows.reduce((a, b) => (b.weight > a.weight ? b : a), rows[0]);
   const hasSGD = rows.some((r) => r.currency === "SGD");
 
-  return { rows, totalValue, portfolioBeta, sectors, topHolding, hasSGD };
+  return { rows, totalValue, portfolioBeta, sectors, topHolding, hasSGD, betaMissing };
 }
 
 function buildPortfolioSummary({ rows, totalValue, portfolioBeta, sectors, topHolding }) {
@@ -584,11 +592,13 @@ function buildPortfolioSummary({ rows, totalValue, portfolioBeta, sectors, topHo
     lines.push(
       `- ${r.symbol} (${r.name}, ${r.exchange}) x ${r.qty} shares @ ${ccy}${r.price} ` +
         `= US$${Math.round(r.value).toLocaleString()} ` +
-        `(${(r.weight * 100).toFixed(1)}% of portfolio, beta ${r.beta}, sector ${r.sector})`
+        `(${(r.weight * 100).toFixed(1)}% of portfolio, beta ${r.beta ?? "n/a"}, sector ${r.sector})`
     );
   }
   lines.push(`Total portfolio value: US$${Math.round(totalValue).toLocaleString()}`);
-  lines.push(`Weighted portfolio beta vs S&P 500: ${portfolioBeta.toFixed(2)}`);
+  lines.push(
+    `Weighted portfolio beta vs S&P 500: ${portfolioBeta != null ? portfolioBeta.toFixed(2) : "n/a"}`
+  );
   lines.push(
     "Sector weights: " +
       sectors.map((s) => `${s.name} ${(s.weight * 100).toFixed(1)}%`).join(", ")
@@ -988,6 +998,12 @@ function SectorBars({ sectors }) {
 // ---------------------------------------------------------------------------
 function buildVerdict({ portfolioBeta, topHolding, sectors }) {
   const parts = [];
+  if (portfolioBeta == null) {
+    parts.push(
+      "Beta couldn't be computed for these holdings (insufficient price history), so a volatility verdict isn't available."
+    );
+    return parts.join(" ");
+  }
   if (portfolioBeta > 1.05) {
     parts.push(
       `Your portfolio is ${portfolioBeta.toFixed(1)}× more volatile than the S&P 500.`
@@ -1289,7 +1305,13 @@ export default function Riskometer({
           <>
             {/* Hero gauge */}
             <Card className="rk-gauge-card">
-              <RiskGauge beta={portfolio.portfolioBeta} />
+              {portfolio.portfolioBeta != null ? (
+                <RiskGauge beta={portfolio.portfolioBeta} />
+              ) : (
+                <p style={{ padding: "40px 0", color: "#64748B", fontWeight: 600 }}>
+                  Beta unavailable — not enough price history
+                </p>
+              )}
               <p className="rk-gauge-label">Portfolio beta vs S&amp;P 500</p>
             </Card>
 
@@ -1299,10 +1321,14 @@ export default function Riskometer({
                 <CardTitle>Portfolio Beta</CardTitle>
                 <div className="rk-beta-row">
                   <span className="rk-beta-big">
-                    {portfolio.portfolioBeta.toFixed(2)}
+                    {portfolio.portfolioBeta != null
+                      ? portfolio.portfolioBeta.toFixed(2)
+                      : "—"}
                   </span>
                   <span className="rk-beta-meta">
                     weighted avg · US${Math.round(portfolio.totalValue).toLocaleString()} total
+                    {portfolio.betaMissing > 0 &&
+                      ` · ${portfolio.betaMissing} w/o beta`}
                   </span>
                 </div>
                 <table className="rk-table">
@@ -1324,10 +1350,17 @@ export default function Riskometer({
                           className="rk-num"
                           style={{
                             fontWeight: 600,
-                            color: r.beta > 1.5 ? ROSE : r.beta < 1 ? TEAL : "#E2E8F0",
+                            color:
+                              r.beta == null
+                                ? "#64748B"
+                                : r.beta > 1.5
+                                  ? ROSE
+                                  : r.beta < 1
+                                    ? TEAL
+                                    : "#E2E8F0",
                           }}
                         >
-                          {r.beta.toFixed(2)}
+                          {r.beta != null ? r.beta.toFixed(2) : "—"}
                         </td>
                         <td className="rk-num rk-weight">
                           {(r.weight * 100).toFixed(1)}%
@@ -1377,28 +1410,30 @@ export default function Riskometer({
               <Card className="rk-verdict-card">
                 <CardTitle>Volatility Verdict</CardTitle>
                 <p className="rk-verdict">{verdict}</p>
-                <div className="rk-verdict-tag">
-                  <span
-                    className="rk-dot"
-                    style={{
-                      background:
-                        portfolio.portfolioBeta > 1.5
-                          ? ROSE
-                          : portfolio.portfolioBeta > 1.1
-                            ? "#F59E0B"
-                            : TEAL,
-                    }}
-                  />
-                  <span>
-                    {portfolio.portfolioBeta > 1.5
-                      ? "High volatility"
-                      : portfolio.portfolioBeta > 1.1
-                        ? "Above-market volatility"
-                        : portfolio.portfolioBeta < 0.9
-                          ? "Defensive"
-                          : "Market-like volatility"}
-                  </span>
-                </div>
+                {portfolio.portfolioBeta != null && (
+                  <div className="rk-verdict-tag">
+                    <span
+                      className="rk-dot"
+                      style={{
+                        background:
+                          portfolio.portfolioBeta > 1.5
+                            ? ROSE
+                            : portfolio.portfolioBeta > 1.1
+                              ? "#F59E0B"
+                              : TEAL,
+                      }}
+                    />
+                    <span>
+                      {portfolio.portfolioBeta > 1.5
+                        ? "High volatility"
+                        : portfolio.portfolioBeta > 1.1
+                          ? "Above-market volatility"
+                          : portfolio.portfolioBeta < 0.9
+                            ? "Defensive"
+                            : "Market-like volatility"}
+                    </span>
+                  </div>
+                )}
               </Card>
             </div>
 

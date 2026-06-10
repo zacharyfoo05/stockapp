@@ -172,8 +172,58 @@ async function quoteViaSummary(symbol) {
   };
 }
 
+// One year of daily closes via the crumb-free chart endpoint: { 'YYYY-MM-DD' -> close }
+function dailyCloses(symbol) {
+  return cached(`closes:${symbol}`, 6 * 60 * MIN, async () => {
+    const data = await yfGet(
+      `${Q1}/v8/finance/chart/${encodeURIComponent(symbol)}?range=1y&interval=1d`,
+      { withCrumb: false }
+    );
+    const result = data?.chart?.result?.[0];
+    const ts = result?.timestamp || [];
+    const closes = result?.indicators?.quote?.[0]?.close || [];
+    const map = new Map();
+    for (let i = 0; i < ts.length; i++) {
+      if (closes[i] != null) {
+        map.set(new Date(ts[i] * 1000).toISOString().slice(0, 10), closes[i]);
+      }
+    }
+    return map;
+  });
+}
+
+// Real beta = cov(stock returns, S&P 500 returns) / var(S&P 500 returns).
+// Uses the crumb-free chart endpoint, so it works even while rate-limited.
+// Returns null (not a fake 1.0) if there isn't enough overlapping history.
+async function computeBeta(symbol) {
+  const [stock, index] = await Promise.all([
+    dailyCloses(symbol),
+    dailyCloses("%5EGSPC"), // ^GSPC, cached once and reused for every symbol
+  ]);
+  const days = [...stock.keys()].filter((d) => index.has(d)).sort();
+  if (days.length < 60) return null;
+
+  const sR = [];
+  const iR = [];
+  for (let i = 1; i < days.length; i++) {
+    sR.push(stock.get(days[i]) / stock.get(days[i - 1]) - 1);
+    iR.push(index.get(days[i]) / index.get(days[i - 1]) - 1);
+  }
+  const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+  const mS = mean(sR);
+  const mI = mean(iR);
+  let cov = 0;
+  let varI = 0;
+  for (let i = 0; i < sR.length; i++) {
+    cov += (sR[i] - mS) * (iR[i] - mI);
+    varI += (iR[i] - mI) ** 2;
+  }
+  if (varI === 0) return null;
+  return parseFloat((cov / varI).toFixed(2));
+}
+
 // Chart endpoint needs no crumb — works even while the session is rate-limited.
-// Returns live price + currency + name. Beta comes from quoteSummary if available.
+// Price/currency/name from chart meta; beta computed from real price history.
 async function quoteViaChart(symbol) {
   const data = await yfGet(
     `${Q1}/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1d`,
@@ -182,28 +232,33 @@ async function quoteViaChart(symbol) {
   const meta = data?.chart?.result?.[0]?.meta;
   if (!meta || meta.regularMarketPrice == null) return null;
 
-  let name = meta.longName || meta.shortName || symbol;
-  let sector = "Other";
-  let beta = 1.0;
-
-  // Try to enrich with beta+sector from quoteSummary (needs session).
-  // Silently skip if session is not yet ready.
+  // Prefer quoteSummary when a session exists (gives Yahoo's published beta);
+  // otherwise compute a real beta from history. Both are genuine — never 1.0 filler.
   if (session) {
     try {
       const q = await quoteViaSummary(symbol);
-      if (q) return q; // got everything in one shot
+      if (q) return q;
     } catch {
-      // session not ready yet — price-only is still useful
+      // session not ready — fall through to history-based beta
     }
   }
 
-  // Best-effort name/sector from the crumb-free search endpoint
+  let name = meta.longName || meta.shortName || symbol;
+  let sector = "Other";
   try {
     const hits = await searchYahoo(symbol);
     const exact = hits.find((h) => h.symbol === symbol) || hits[0];
     if (exact) { name = exact.name; sector = exact.sector; }
   } catch {
     // decorative
+  }
+
+  // Real computed beta; null if history is too short (UI shows "—", excluded from avg)
+  let beta = null;
+  try {
+    beta = await computeBeta(symbol);
+  } catch {
+    beta = null;
   }
 
   return {
