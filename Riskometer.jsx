@@ -33,6 +33,250 @@ const GAUGE_MAX_BETA = 2.5; // score range 0 → 2+ mapped across the arc
 const SUGGESTION_SYSTEM_PROMPT = `You are a concise equity research assistant. Given a user's portfolio details, return ONLY a valid JSON array of 4 stock suggestions. No preamble, no markdown, no backticks — raw JSON only. Each object must have exactly: ticker (string), company (string), action ("Buy" or "Hold"), risk_level ("Low", "Medium", or "High"), sector (string), rationale (string, 2 sentences max). Suggest stocks that complement or balance the portfolio — prioritise diversification, sector gaps, and appropriate risk level.`;
 
 // ---------------------------------------------------------------------------
+// Self-contained stylesheet — no Tailwind or external CSS required
+// ---------------------------------------------------------------------------
+const STYLES = `
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+.rk-root, .rk-root * { box-sizing: border-box; margin: 0; padding: 0; }
+.rk-root {
+  min-height: 100vh;
+  background: #0D0F14;
+  color: #F1F5F9;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  padding: 40px 20px 24px;
+  -webkit-font-smoothing: antialiased;
+}
+.rk-shell { max-width: 1040px; margin: 0 auto; }
+
+.rk-header { margin-bottom: 32px; }
+.rk-title { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; color: #F1F5F9; }
+.rk-subtitle { margin-top: 6px; font-size: 14px; color: #94A3B8; }
+
+.rk-card {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 16px;
+  padding: 22px;
+  backdrop-filter: blur(8px);
+}
+.rk-card-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: #94A3B8;
+}
+.rk-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.rk-toast {
+  position: fixed;
+  left: 50%;
+  top: 24px;
+  transform: translateX(-50%);
+  z-index: 50;
+  background: #2a121b;
+  border: 1px solid rgba(244, 63, 94, 0.4);
+  border-radius: 12px;
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #FECDD3;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  animation: rk-toast-in 200ms ease-out;
+}
+@keyframes rk-toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.rk-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.rk-input {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  color: #F1F5F9;
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+.rk-input::placeholder { color: #64748B; font-weight: 400; text-transform: none; }
+.rk-input:focus { border-color: ${ACCENT}; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25); }
+.rk-input-ticker { width: 168px; text-transform: uppercase; }
+.rk-input-qty { width: 96px; }
+.rk-input-qty::-webkit-outer-spin-button,
+.rk-input-qty::-webkit-inner-spin-button { -webkit-appearance: none; }
+
+.rk-btn {
+  background: ${ACCENT};
+  border: none;
+  border-radius: 12px;
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  color: #ffffff;
+  cursor: pointer;
+  transition: opacity 150ms ease, transform 100ms ease;
+}
+.rk-btn:hover { opacity: 0.88; }
+.rk-btn:active { transform: scale(0.97); }
+.rk-btn:disabled { opacity: 0.45; cursor: default; transform: none; }
+
+.rk-count { margin-left: auto; font-size: 12px; font-weight: 500; color: #64748B; }
+
+.rk-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.rk-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  background: rgba(99, 102, 241, 0.1);
+  border-radius: 12px;
+  padding: 7px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #E2E8F0;
+}
+.rk-chip-qty { font-weight: 500; color: #94A3B8; }
+.rk-chip-x {
+  background: none;
+  border: none;
+  padding: 0 0 0 2px;
+  font-size: 13px;
+  font-family: inherit;
+  color: #94A3B8;
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+.rk-chip-x:hover { color: #FB7185; }
+
+.rk-empty {
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  padding: 80px 20px;
+  text-align: center;
+}
+.rk-empty-icon { font-size: 32px; }
+.rk-empty-main { margin-top: 14px; font-size: 16px; font-weight: 600; color: #CBD5E1; }
+.rk-empty-hint { margin-top: 6px; font-size: 14px; color: #64748B; }
+
+.rk-grid { display: grid; gap: 22px; grid-template-columns: 1fr; margin-bottom: 22px; }
+@media (min-width: 760px) { .rk-grid { grid-template-columns: 1fr 1fr; } }
+
+.rk-gauge-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 32px;
+  padding-bottom: 14px;
+  margin-bottom: 22px;
+}
+.rk-gauge-svg { width: 100%; max-width: 420px; display: block; }
+.rk-gauge-label {
+  margin-top: -4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: #64748B;
+}
+
+.rk-beta-big { font-size: 32px; font-weight: 800; color: ${ACCENT}; line-height: 1; }
+.rk-beta-meta { font-size: 12px; font-weight: 500; color: #64748B; }
+.rk-beta-row { display: flex; align-items: baseline; gap: 10px; margin-bottom: 16px; }
+
+.rk-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.rk-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #64748B;
+  padding-bottom: 8px;
+}
+.rk-table th.rk-num, .rk-table td.rk-num { text-align: right; font-variant-numeric: tabular-nums; }
+.rk-table td { padding: 9px 0; border-top: 1px solid rgba(255, 255, 255, 0.06); }
+.rk-table td:first-child { font-weight: 600; color: #E2E8F0; }
+.rk-table td.rk-weight { font-weight: 500; color: #94A3B8; }
+
+.rk-donut-wrap { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+@media (min-width: 480px) { .rk-donut-wrap { flex-direction: row; } }
+.rk-donut-svg { width: 160px; flex-shrink: 0; }
+.rk-legend { width: 100%; list-style: none; display: flex; flex-direction: column; gap: 7px; font-size: 14px; }
+.rk-legend li { display: flex; align-items: center; gap: 9px; }
+.rk-swatch { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+.rk-legend-ticker { font-weight: 600; color: #E2E8F0; }
+.rk-legend-pct { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; color: #94A3B8; }
+
+.rk-flag {
+  border-radius: 7px;
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: rgba(244, 63, 94, 0.14);
+  color: #FB7185;
+  white-space: nowrap;
+}
+
+.rk-verdict-card { display: flex; flex-direction: column; }
+.rk-verdict { font-size: 15px; font-weight: 500; line-height: 1.65; color: #E2E8F0; }
+.rk-verdict-tag { margin-top: auto; display: flex; align-items: center; gap: 8px; padding-top: 18px; font-size: 12px; font-weight: 600; color: #94A3B8; }
+.rk-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+.rk-sugg-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.rk-sugg-sub { margin-top: 5px; font-size: 12px; color: #64748B; }
+.rk-sugg-grid { display: grid; gap: 14px; grid-template-columns: 1fr; }
+@media (min-width: 640px) { .rk-sugg-grid { grid-template-columns: 1fr 1fr; } }
+
+.rk-sugg-card {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 14px;
+  padding: 16px;
+  transition: background 150ms ease;
+}
+.rk-sugg-card:hover { background: rgba(255, 255, 255, 0.06); }
+.rk-sugg-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 11px; }
+.rk-tag-ticker {
+  border-radius: 9px;
+  padding: 5px 11px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  background: rgba(99, 102, 241, 0.16);
+  color: #A5B4FC;
+}
+.rk-tag { border-radius: 7px; padding: 3px 9px; font-size: 12px; font-weight: 700; }
+.rk-tag-risk { margin-left: auto; font-weight: 600; }
+.rk-sugg-company { font-size: 14px; font-weight: 600; color: #E2E8F0; }
+.rk-sugg-sector { font-weight: 500; color: #64748B; }
+.rk-sugg-rationale { margin-top: 7px; font-size: 14px; line-height: 1.6; color: #94A3B8; }
+
+.rk-error { margin-bottom: 16px; font-size: 14px; font-weight: 500; color: ${ROSE}; }
+.rk-sugg-empty { padding: 26px 0; text-align: center; font-size: 14px; color: #64748B; }
+
+.rk-skel { animation: rk-pulse 1.6s ease-in-out infinite; }
+@keyframes rk-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+.rk-skel-bar { background: rgba(255, 255, 255, 0.09); border-radius: 6px; }
+.rk-skel-row { display: flex; align-items: center; gap: 8px; margin-bottom: 13px; }
+
+.rk-footer { margin-top: 44px; text-align: center; font-size: 12px; color: #475569; }
+`;
+
+// ---------------------------------------------------------------------------
 // Portfolio math
 // ---------------------------------------------------------------------------
 function computePortfolio(holdings) {
@@ -130,12 +374,9 @@ async function fetchSuggestions(userPortfolioSummary) {
 // ---------------------------------------------------------------------------
 // UI primitives
 // ---------------------------------------------------------------------------
-function Card({ children, className = "" }) {
+function Card({ children, className = "", style }) {
   return (
-    <div
-      className={`rounded-xl border bg-white/[0.04] p-5 ${className}`}
-      style={{ borderColor: "#ffffff0a", backdropFilter: "blur(8px)" }}
-    >
+    <div className={`rk-card ${className}`} style={style}>
       {children}
     </div>
   );
@@ -143,10 +384,8 @@ function Card({ children, className = "" }) {
 
 function CardTitle({ children, badge }) {
   return (
-    <div className="mb-4 flex items-center justify-between gap-2">
-      <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
-        {children}
-      </h3>
+    <div className="rk-card-head">
+      <h3 className="rk-card-title">{children}</h3>
       {badge}
     </div>
   );
@@ -154,14 +393,7 @@ function CardTitle({ children, badge }) {
 
 function Toast({ message }) {
   if (!message) return null;
-  return (
-    <div
-      className="fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-xl border px-4 py-2.5 text-sm font-semibold text-rose-100 shadow-xl"
-      style={{ background: "#2a121b", borderColor: ROSE + "55" }}
-    >
-      {message}
-    </div>
-  );
+  return <div className="rk-toast">{message}</div>;
 }
 
 // ---------------------------------------------------------------------------
@@ -183,7 +415,7 @@ function RiskGauge({ beta }) {
   const ticks = [0, 0.5, 1.0, 1.5, 2.0, 2.5];
 
   return (
-    <svg viewBox="0 0 320 190" className="w-full max-w-md" role="img" aria-label={`Risk gauge: portfolio beta ${beta.toFixed(2)}`}>
+    <svg viewBox="0 0 320 190" className="rk-gauge-svg" role="img" aria-label={`Risk gauge: portfolio beta ${beta.toFixed(2)}`}>
       <defs>
         <linearGradient id="riskArc" x1="0" y1="0" x2="1" y2="0">
           <stop offset="0%" stopColor="#22C55E" />
@@ -278,8 +510,8 @@ function ConcentrationDonut({ rows }) {
   });
 
   return (
-    <div className="flex flex-col items-center gap-4 sm:flex-row">
-      <svg viewBox={`0 0 ${size} ${size}`} className="w-40 shrink-0">
+    <div className="rk-donut-wrap">
+      <svg viewBox={`0 0 ${size} ${size}`} className="rk-donut-svg">
         <circle cx={c} cy={c} r={radius} fill="none" stroke="#ffffff0f" strokeWidth="22" />
         {segments.map((s) => (
           <circle
@@ -303,22 +535,13 @@ function ConcentrationDonut({ rows }) {
           {rows.length === 1 ? "HOLDING" : "HOLDINGS"}
         </text>
       </svg>
-      <ul className="w-full space-y-1.5 text-sm">
+      <ul className="rk-legend">
         {segments.map((s) => (
-          <li key={s.row.ticker} className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-sm" style={{ background: s.color }} />
-            <span className="font-semibold text-slate-200">{s.row.ticker}</span>
-            <span className="ml-auto font-semibold tabular-nums text-slate-400">
-              {(s.row.weight * 100).toFixed(1)}%
-            </span>
-            {s.row.weight > 0.25 && (
-              <span
-                className="rounded-md px-1.5 py-0.5 text-[10px] font-bold"
-                style={{ background: ROSE + "22", color: ROSE }}
-              >
-                &gt;25%
-              </span>
-            )}
+          <li key={s.row.ticker}>
+            <span className="rk-swatch" style={{ background: s.color }} />
+            <span className="rk-legend-ticker">{s.row.ticker}</span>
+            <span className="rk-legend-pct">{(s.row.weight * 100).toFixed(1)}%</span>
+            {s.row.weight > 0.25 && <span className="rk-flag">&gt;25%</span>}
           </li>
         ))}
       </ul>
@@ -338,7 +561,7 @@ function SectorBars({ sectors }) {
   return (
     <svg
       viewBox={`0 0 ${chartW} ${height}`}
-      className="w-full"
+      style={{ width: "100%", display: "block" }}
       preserveAspectRatio="xMidYMid meet"
     >
       {sectors.map((s, i) => {
@@ -419,18 +642,15 @@ function buildVerdict({ portfolioBeta, topHolding, sectors }) {
 // ---------------------------------------------------------------------------
 function SuggestionSkeleton() {
   return (
-    <div
-      className="animate-pulse rounded-xl border bg-white/[0.04] p-4"
-      style={{ borderColor: "#ffffff0a" }}
-    >
-      <div className="mb-3 flex items-center gap-2">
-        <div className="h-7 w-16 rounded-lg bg-white/10" />
-        <div className="h-5 w-12 rounded-md bg-white/10" />
-        <div className="ml-auto h-5 w-16 rounded-md bg-white/10" />
+    <div className="rk-sugg-card rk-skel">
+      <div className="rk-skel-row">
+        <div className="rk-skel-bar" style={{ height: 28, width: 64 }} />
+        <div className="rk-skel-bar" style={{ height: 20, width: 48 }} />
+        <div className="rk-skel-bar" style={{ height: 20, width: 64, marginLeft: "auto" }} />
       </div>
-      <div className="mb-2 h-3 w-3/4 rounded bg-white/10" />
-      <div className="h-3 w-full rounded bg-white/[0.07]" />
-      <div className="mt-1.5 h-3 w-5/6 rounded bg-white/[0.07]" />
+      <div className="rk-skel-bar" style={{ height: 12, width: "75%", marginBottom: 8 }} />
+      <div className="rk-skel-bar" style={{ height: 12, width: "100%", opacity: 0.7 }} />
+      <div className="rk-skel-bar" style={{ height: 12, width: "85%", marginTop: 6, opacity: 0.7 }} />
     </div>
   );
 }
@@ -442,37 +662,29 @@ function SuggestionCard({ suggestion }) {
     risk_level === "High" ? ROSE : risk_level === "Medium" ? "#F59E0B" : TEAL;
 
   return (
-    <div
-      className="rounded-xl border bg-white/[0.04] p-4 transition-colors hover:bg-white/[0.06]"
-      style={{ borderColor: "#ffffff0a", backdropFilter: "blur(8px)" }}
-    >
-      <div className="mb-2.5 flex flex-wrap items-center gap-2">
+    <div className="rk-sugg-card">
+      <div className="rk-sugg-tags">
+        <span className="rk-tag-ticker">{ticker}</span>
         <span
-          className="rounded-lg px-2.5 py-1 text-sm font-bold tracking-wide"
-          style={{ background: ACCENT + "26", color: "#A5B4FC" }}
-        >
-          {ticker}
-        </span>
-        <span
-          className="rounded-md px-2 py-0.5 text-xs font-bold"
+          className="rk-tag"
           style={{
             background: (isBuy ? TEAL : "#3B82F6") + "22",
-            color: isBuy ? TEAL : "#60A5FA",
+            color: isBuy ? "#2DD4BF" : "#60A5FA",
           }}
         >
           {action}
         </span>
         <span
-          className="ml-auto rounded-md px-2 py-0.5 text-xs font-semibold"
+          className="rk-tag rk-tag-risk"
           style={{ background: riskColor + "1f", color: riskColor }}
         >
           {risk_level} risk
         </span>
       </div>
-      <p className="text-sm font-semibold text-slate-200">
-        {company} <span className="font-medium text-slate-500">· {sector}</span>
+      <p className="rk-sugg-company">
+        {company} <span className="rk-sugg-sector">· {sector}</span>
       </p>
-      <p className="mt-1.5 text-sm leading-relaxed text-slate-400">{rationale}</p>
+      <p className="rk-sugg-rationale">{rationale}</p>
     </div>
   );
 }
@@ -552,41 +764,34 @@ export default function Riskometer() {
   const concentrated = portfolio && portfolio.topHolding.weight > 0.25;
 
   return (
-    <div
-      className="min-h-screen px-4 py-8 text-slate-100 sm:px-8"
-      style={{ background: "#0D0F14", fontFamily: "'Inter', system-ui, sans-serif" }}
-    >
-      <link
-        rel="stylesheet"
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
-      />
+    <div className="rk-root">
+      <style>{STYLES}</style>
       <Toast message={toast} />
 
-      <div className="mx-auto max-w-5xl">
+      <div className="rk-shell">
         {/* Header */}
-        <header className="mb-8">
-          <h1 className="text-2xl font-bold tracking-tight">
+        <header className="rk-header">
+          <h1 className="rk-title">
             <span style={{ color: ACCENT }}>Risk</span>ometer
           </h1>
-          <p className="mt-1 text-sm text-slate-400">
+          <p className="rk-subtitle">
             Understand your portfolio's risk relative to the market.
           </p>
         </header>
 
         {/* Portfolio input */}
-        <Card className="mb-6">
+        <Card style={{ marginBottom: 22 }}>
           <CardTitle>Portfolio</CardTitle>
-          <form onSubmit={addHolding} className="flex flex-wrap items-center gap-2">
+          <form onSubmit={addHolding} className="rk-form">
             <input
               value={tickerInput}
               onChange={(e) => setTickerInput(e.target.value)}
               placeholder="Ticker (e.g. NVDA)"
-              className="w-40 rounded-xl border bg-white/[0.04] px-3 py-2 text-sm font-semibold uppercase placeholder:font-normal placeholder:normal-case placeholder:text-slate-500 focus:outline-none focus:ring-2"
-              style={{ borderColor: "#ffffff0a", "--tw-ring-color": ACCENT }}
+              className="rk-input rk-input-ticker"
               maxLength={6}
               aria-label="Ticker symbol"
             />
-            <span className="text-slate-500">×</span>
+            <span style={{ color: "#64748B" }}>×</span>
             <input
               value={qtyInput}
               onChange={(e) => setQtyInput(e.target.value)}
@@ -594,37 +799,28 @@ export default function Riskometer() {
               type="number"
               min="1"
               step="1"
-              className="w-24 rounded-xl border bg-white/[0.04] px-3 py-2 text-sm font-semibold placeholder:font-normal placeholder:text-slate-500 focus:outline-none focus:ring-2"
-              style={{ borderColor: "#ffffff0a", "--tw-ring-color": ACCENT }}
+              className="rk-input rk-input-qty"
               aria-label="Quantity"
             />
-            <button
-              type="submit"
-              className="rounded-xl px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90"
-              style={{ background: ACCENT }}
-            >
+            <button type="submit" className="rk-btn">
               Add
             </button>
-            <span className="ml-auto text-xs font-medium text-slate-500">
+            <span className="rk-count">
               {holdings.length}/{MAX_HOLDINGS} stocks
             </span>
           </form>
 
           {/* Chips */}
           {holdings.length > 0 && (
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="rk-chips">
               {holdings.map((h) => (
-                <span
-                  key={h.ticker}
-                  className="inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-semibold"
-                  style={{ borderColor: ACCENT + "44", background: ACCENT + "14" }}
-                >
+                <span key={h.ticker} className="rk-chip">
                   {h.ticker}
-                  <span className="font-medium text-slate-400">× {h.qty}</span>
+                  <span className="rk-chip-qty">× {h.qty}</span>
                   <button
                     onClick={() => removeHolding(h.ticker)}
                     aria-label={`Remove ${h.ticker}`}
-                    className="ml-0.5 text-slate-400 transition-colors hover:text-rose-400"
+                    className="rk-chip-x"
                   >
                     ✕
                   </button>
@@ -636,17 +832,10 @@ export default function Riskometer() {
 
         {/* Empty state */}
         {!portfolio && (
-          <div
-            className="rounded-xl border border-dashed py-20 text-center"
-            style={{ borderColor: "#ffffff14" }}
-          >
-            <p className="text-3xl">📊</p>
-            <p className="mt-3 font-semibold text-slate-300">
-              Add your stocks to see your risk profile
-            </p>
-            <p className="mt-1 text-sm text-slate-500">
-              Try NVDA, AAPL, MSFT, TSLA…
-            </p>
+          <div className="rk-empty">
+            <p className="rk-empty-icon">📊</p>
+            <p className="rk-empty-main">Add your stocks to see your risk profile</p>
+            <p className="rk-empty-hint">Try NVDA, AAPL, MSFT, TSLA…</p>
           </div>
         )}
 
@@ -654,44 +843,45 @@ export default function Riskometer() {
         {portfolio && (
           <>
             {/* Hero gauge */}
-            <Card className="mb-6 flex flex-col items-center pb-2 pt-8">
+            <Card className="rk-gauge-card">
               <RiskGauge beta={portfolio.portfolioBeta} />
-              <p className="-mt-2 mb-4 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Portfolio beta vs S&amp;P 500
-              </p>
+              <p className="rk-gauge-label">Portfolio beta vs S&amp;P 500</p>
             </Card>
 
-            <div className="mb-6 grid gap-6 md:grid-cols-2">
+            <div className="rk-grid">
               {/* Beta table */}
               <Card>
                 <CardTitle>Portfolio Beta</CardTitle>
-                <div className="mb-4 flex items-baseline gap-2">
-                  <span className="text-3xl font-bold" style={{ color: ACCENT }}>
+                <div className="rk-beta-row">
+                  <span className="rk-beta-big">
                     {portfolio.portfolioBeta.toFixed(2)}
                   </span>
-                  <span className="text-xs font-medium text-slate-500">
+                  <span className="rk-beta-meta">
                     weighted avg · ${portfolio.totalValue.toLocaleString()} total
                   </span>
                 </div>
-                <table className="w-full text-sm">
+                <table className="rk-table">
                   <thead>
-                    <tr className="text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
-                      <th className="pb-2">Stock</th>
-                      <th className="pb-2 text-right">Beta</th>
-                      <th className="pb-2 text-right">Weight</th>
+                    <tr>
+                      <th>Stock</th>
+                      <th className="rk-num">Beta</th>
+                      <th className="rk-num">Weight</th>
                     </tr>
                   </thead>
                   <tbody>
                     {portfolio.rows.map((r) => (
-                      <tr key={r.ticker} className="border-t" style={{ borderColor: "#ffffff0a" }}>
-                        <td className="py-2 font-semibold text-slate-200">{r.ticker}</td>
+                      <tr key={r.ticker}>
+                        <td>{r.ticker}</td>
                         <td
-                          className="py-2 text-right font-semibold tabular-nums"
-                          style={{ color: r.beta > 1.5 ? ROSE : r.beta < 1 ? TEAL : "#E2E8F0" }}
+                          className="rk-num"
+                          style={{
+                            fontWeight: 600,
+                            color: r.beta > 1.5 ? ROSE : r.beta < 1 ? TEAL : "#E2E8F0",
+                          }}
                         >
                           {r.beta.toFixed(2)}
                         </td>
-                        <td className="py-2 text-right font-medium tabular-nums text-slate-400">
+                        <td className="rk-num rk-weight">
                           {(r.weight * 100).toFixed(1)}%
                         </td>
                       </tr>
@@ -705,10 +895,7 @@ export default function Riskometer() {
                 <CardTitle
                   badge={
                     concentrated ? (
-                      <span
-                        className="rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-wider"
-                        style={{ background: ROSE + "22", color: ROSE }}
-                      >
+                      <span className="rk-flag">
                         ⚠ {portfolio.topHolding.ticker} exceeds 25%
                       </span>
                     ) : null
@@ -724,12 +911,7 @@ export default function Riskometer() {
                 <CardTitle
                   badge={
                     portfolio.sectors[0].weight > 0.6 ? (
-                      <span
-                        className="rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-wider"
-                        style={{ background: ROSE + "22", color: ROSE }}
-                      >
-                        ⚠ &gt;60% one sector
-                      </span>
+                      <span className="rk-flag">⚠ &gt;60% one sector</span>
                     ) : null
                   }
                 >
@@ -739,54 +921,47 @@ export default function Riskometer() {
               </Card>
 
               {/* Verdict */}
-              <Card>
+              <Card className="rk-verdict-card">
                 <CardTitle>Volatility Verdict</CardTitle>
-                <div className="flex h-full flex-col">
-                  <p className="text-[15px] font-medium leading-relaxed text-slate-200">
-                    {verdict}
-                  </p>
-                  <div className="mt-auto flex items-center gap-2 pt-4 text-xs font-semibold">
-                    <span
-                      className="h-2 w-2 rounded-full"
-                      style={{
-                        background:
-                          portfolio.portfolioBeta > 1.5
-                            ? ROSE
-                            : portfolio.portfolioBeta > 1.1
-                              ? "#F59E0B"
-                              : TEAL,
-                      }}
-                    />
-                    <span className="text-slate-400">
-                      {portfolio.portfolioBeta > 1.5
-                        ? "High volatility"
-                        : portfolio.portfolioBeta > 1.1
-                          ? "Above-market volatility"
-                          : portfolio.portfolioBeta < 0.9
-                            ? "Defensive"
-                            : "Market-like volatility"}
-                    </span>
-                  </div>
+                <p className="rk-verdict">{verdict}</p>
+                <div className="rk-verdict-tag">
+                  <span
+                    className="rk-dot"
+                    style={{
+                      background:
+                        portfolio.portfolioBeta > 1.5
+                          ? ROSE
+                          : portfolio.portfolioBeta > 1.1
+                            ? "#F59E0B"
+                            : TEAL,
+                    }}
+                  />
+                  <span>
+                    {portfolio.portfolioBeta > 1.5
+                      ? "High volatility"
+                      : portfolio.portfolioBeta > 1.1
+                        ? "Above-market volatility"
+                        : portfolio.portfolioBeta < 0.9
+                          ? "Defensive"
+                          : "Market-like volatility"}
+                  </span>
                 </div>
               </Card>
             </div>
 
             {/* AI suggestions */}
             <Card>
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="rk-sugg-head">
                 <div>
-                  <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
-                    AI Stock Suggestions
-                  </h3>
-                  <p className="mt-1 text-xs text-slate-500">
+                  <h3 className="rk-card-title">AI Stock Suggestions</h3>
+                  <p className="rk-sugg-sub">
                     Powered by Claude · based on your beta, sectors and concentration
                   </p>
                 </div>
                 <button
                   onClick={getSuggestions}
                   disabled={loadingSuggestions}
-                  className="rounded-xl px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-                  style={{ background: ACCENT }}
+                  className="rk-btn"
                 >
                   {loadingSuggestions
                     ? "Analysing…"
@@ -796,14 +971,10 @@ export default function Riskometer() {
                 </button>
               </div>
 
-              {suggestionError && (
-                <p className="mb-4 text-sm font-medium" style={{ color: ROSE }}>
-                  {suggestionError}
-                </p>
-              )}
+              {suggestionError && <p className="rk-error">{suggestionError}</p>}
 
               {loadingSuggestions && (
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="rk-sugg-grid">
                   {[0, 1, 2, 3].map((i) => (
                     <SuggestionSkeleton key={i} />
                   ))}
@@ -811,7 +982,7 @@ export default function Riskometer() {
               )}
 
               {!loadingSuggestions && suggestions && (
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="rk-sugg-grid">
                   {suggestions.map((s) => (
                     <SuggestionCard key={s.ticker} suggestion={s} />
                   ))}
@@ -819,7 +990,7 @@ export default function Riskometer() {
               )}
 
               {!loadingSuggestions && !suggestions && !suggestionError && (
-                <p className="py-6 text-center text-sm text-slate-500">
+                <p className="rk-sugg-empty">
                   Get AI-powered ideas to balance your portfolio.
                 </p>
               )}
@@ -827,9 +998,7 @@ export default function Riskometer() {
           </>
         )}
 
-        <footer className="mt-10 text-center text-xs text-slate-600">
-          Mock data · not investment advice
-        </footer>
+        <footer className="rk-footer">Mock data · not investment advice</footer>
       </div>
     </div>
   );
