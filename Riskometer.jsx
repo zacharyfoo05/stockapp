@@ -1,22 +1,23 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 
 // ---------------------------------------------------------------------------
-// Mock market data
+// Riskometer — portfolio risk dashboard, designed as a brokerage add-on.
+//
+// Embed it with your own market-data feed:
+//
+//   <Riskometer
+//     provider={myBrokerageProvider}        // implements searchSymbols/getQuote
+//     initialHoldings={[{ symbol: "AAPL", qty: 10 }]}  // user's live positions
+//   />
+//
+// A provider implements:
+//   searchSymbols(query) -> Promise<Quote[]>   (symbol/name search, ranked)
+//   getQuote(symbol)     -> Promise<Quote|null>
+// where Quote = { symbol, name, price, beta, sector, exchange, currency }
+//
+// Without props it falls back to the built-in sample dataset below
+// (major US + SGX listings with static prices/betas).
 // ---------------------------------------------------------------------------
-const STOCK_DATA = {
-  NVDA: { price: 131, beta: 1.75, sector: "Technology" },
-  AAPL: { price: 211, beta: 1.2, sector: "Technology" },
-  MSFT: { price: 450, beta: 0.9, sector: "Technology" },
-  TSLA: { price: 248, beta: 2.1, sector: "Consumer Discretionary" },
-  GOOGL: { price: 178, beta: 1.05, sector: "Communication Services" },
-  AMZN: { price: 205, beta: 1.15, sector: "Consumer Discretionary" },
-  META: { price: 607, beta: 1.35, sector: "Communication Services" },
-  AMD: { price: 164, beta: 1.85, sector: "Technology" },
-  INTC: { price: 20, beta: 0.95, sector: "Technology" },
-  VRT: { price: 94, beta: 1.6, sector: "Industrials" },
-  MU: { price: 112, beta: 1.7, sector: "Technology" },
-  TSM: { price: 175, beta: 1.3, sector: "Technology" },
-};
 
 const ACCENT = "#6366F1";
 const TEAL = "#14B8A6";
@@ -30,7 +31,166 @@ const SLICE_COLORS = [
 const MAX_HOLDINGS = 10;
 const GAUGE_MAX_BETA = 2.5; // score range 0 → 2+ mapped across the arc
 
-const SUGGESTION_SYSTEM_PROMPT = `You are a concise equity research assistant. Given a user's portfolio details, return ONLY a valid JSON array of 4 stock suggestions. No preamble, no markdown, no backticks — raw JSON only. Each object must have exactly: ticker (string), company (string), action ("Buy" or "Hold"), risk_level ("Low", "Medium", or "High"), sector (string), rationale (string, 2 sentences max). Suggest stocks that complement or balance the portfolio — prioritise diversification, sector gaps, and appropriate risk level.`;
+// Portfolio weights are computed in USD; SGX prices are quoted in SGD.
+const FX_TO_USD = { USD: 1, SGD: 0.74 };
+
+// ---------------------------------------------------------------------------
+// Sample market data — [name, price (native ccy), beta vs S&P 500, sector]
+// ---------------------------------------------------------------------------
+const US_STOCKS = {
+  AAPL: ["Apple", 211, 1.2, "Technology"],
+  MSFT: ["Microsoft", 450, 0.9, "Technology"],
+  NVDA: ["NVIDIA", 131, 1.75, "Technology"],
+  GOOGL: ["Alphabet", 178, 1.05, "Communication Services"],
+  AMZN: ["Amazon", 205, 1.15, "Consumer Discretionary"],
+  META: ["Meta Platforms", 607, 1.35, "Communication Services"],
+  TSLA: ["Tesla", 248, 2.1, "Consumer Discretionary"],
+  AVGO: ["Broadcom", 172, 1.25, "Technology"],
+  "BRK.B": ["Berkshire Hathaway", 465, 0.85, "Financials"],
+  JPM: ["JPMorgan Chase", 245, 1.1, "Financials"],
+  V: ["Visa", 290, 0.95, "Financials"],
+  MA: ["Mastercard", 520, 1.05, "Financials"],
+  BAC: ["Bank of America", 42, 1.3, "Financials"],
+  WFC: ["Wells Fargo", 75, 1.15, "Financials"],
+  C: ["Citigroup", 70, 1.45, "Financials"],
+  GS: ["Goldman Sachs", 580, 1.4, "Financials"],
+  MS: ["Morgan Stanley", 125, 1.35, "Financials"],
+  PYPL: ["PayPal", 80, 1.45, "Financials"],
+  COIN: ["Coinbase", 250, 3.3, "Financials"],
+  JNJ: ["Johnson & Johnson", 155, 0.55, "Healthcare"],
+  UNH: ["UnitedHealth", 520, 0.6, "Healthcare"],
+  LLY: ["Eli Lilly", 780, 0.45, "Healthcare"],
+  PFE: ["Pfizer", 27, 0.65, "Healthcare"],
+  MRK: ["Merck", 100, 0.4, "Healthcare"],
+  ABBV: ["AbbVie", 190, 0.6, "Healthcare"],
+  AMGN: ["Amgen", 290, 0.6, "Healthcare"],
+  GILD: ["Gilead Sciences", 95, 0.35, "Healthcare"],
+  TMO: ["Thermo Fisher", 540, 0.8, "Healthcare"],
+  WMT: ["Walmart", 95, 0.7, "Consumer Staples"],
+  PG: ["Procter & Gamble", 165, 0.45, "Consumer Staples"],
+  KO: ["Coca-Cola", 63, 0.6, "Consumer Staples"],
+  PEP: ["PepsiCo", 165, 0.55, "Consumer Staples"],
+  COST: ["Costco", 920, 0.8, "Consumer Staples"],
+  XOM: ["Exxon Mobil", 115, 0.9, "Energy"],
+  CVX: ["Chevron", 155, 1.05, "Energy"],
+  COP: ["ConocoPhillips", 105, 1.2, "Energy"],
+  SLB: ["Schlumberger", 42, 1.4, "Energy"],
+  HD: ["Home Depot", 400, 1.0, "Consumer Discretionary"],
+  LOW: ["Lowe's", 245, 1.1, "Consumer Discretionary"],
+  MCD: ["McDonald's", 295, 0.7, "Consumer Discretionary"],
+  SBUX: ["Starbucks", 95, 0.95, "Consumer Discretionary"],
+  NKE: ["Nike", 75, 1.05, "Consumer Discretionary"],
+  TGT: ["Target", 130, 1.0, "Consumer Discretionary"],
+  BKNG: ["Booking Holdings", 5000, 1.3, "Consumer Discretionary"],
+  ABNB: ["Airbnb", 135, 1.2, "Consumer Discretionary"],
+  F: ["Ford", 11, 1.6, "Consumer Discretionary"],
+  GM: ["General Motors", 50, 1.4, "Consumer Discretionary"],
+  RIVN: ["Rivian", 12, 2.0, "Consumer Discretionary"],
+  ORCL: ["Oracle", 175, 1.0, "Technology"],
+  CRM: ["Salesforce", 280, 1.3, "Technology"],
+  ADBE: ["Adobe", 480, 1.3, "Technology"],
+  CSCO: ["Cisco", 58, 0.85, "Technology"],
+  IBM: ["IBM", 230, 0.7, "Technology"],
+  QCOM: ["Qualcomm", 165, 1.25, "Technology"],
+  TXN: ["Texas Instruments", 195, 1.0, "Technology"],
+  AMD: ["AMD", 164, 1.85, "Technology"],
+  INTC: ["Intel", 20, 0.95, "Technology"],
+  MU: ["Micron", 112, 1.7, "Technology"],
+  TSM: ["TSMC (ADR)", 175, 1.3, "Technology"],
+  ASML: ["ASML (ADR)", 870, 1.4, "Technology"],
+  ARM: ["Arm Holdings", 140, 2.2, "Technology"],
+  AMAT: ["Applied Materials", 190, 1.5, "Technology"],
+  LRCX: ["Lam Research", 90, 1.5, "Technology"],
+  KLAC: ["KLA", 700, 1.4, "Technology"],
+  MRVL: ["Marvell", 70, 1.6, "Technology"],
+  SMCI: ["Super Micro", 40, 2.4, "Technology"],
+  PLTR: ["Palantir", 75, 2.6, "Technology"],
+  SNOW: ["Snowflake", 160, 1.3, "Technology"],
+  SHOP: ["Shopify", 105, 2.3, "Technology"],
+  NFLX: ["Netflix", 900, 1.3, "Communication Services"],
+  DIS: ["Disney", 110, 1.4, "Communication Services"],
+  T: ["AT&T", 22, 0.7, "Communication Services"],
+  VZ: ["Verizon", 42, 0.45, "Communication Services"],
+  GE: ["GE Aerospace", 180, 1.1, "Industrials"],
+  CAT: ["Caterpillar", 360, 1.1, "Industrials"],
+  BA: ["Boeing", 180, 1.55, "Industrials"],
+  LMT: ["Lockheed Martin", 470, 0.5, "Industrials"],
+  RTX: ["RTX", 120, 0.75, "Industrials"],
+  HON: ["Honeywell", 210, 1.0, "Industrials"],
+  UNP: ["Union Pacific", 240, 1.1, "Industrials"],
+  UPS: ["UPS", 130, 1.05, "Industrials"],
+  FDX: ["FedEx", 270, 1.25, "Industrials"],
+  DE: ["Deere", 410, 1.0, "Industrials"],
+  VRT: ["Vertiv", 94, 1.6, "Industrials"],
+  UBER: ["Uber", 80, 1.4, "Industrials"],
+  DAL: ["Delta Air Lines", 60, 1.3, "Industrials"],
+};
+
+const SG_STOCKS = {
+  "D05.SI": ["DBS Group Holdings", 45.0, 1.1, "Financials"],
+  "O39.SI": ["OCBC Bank", 17.2, 1.0, "Financials"],
+  "U11.SI": ["UOB", 37.5, 1.05, "Financials"],
+  "S68.SI": ["Singapore Exchange", 11.6, 0.6, "Financials"],
+  "Z74.SI": ["Singtel", 3.4, 0.5, "Communication Services"],
+  "C6L.SI": ["Singapore Airlines", 6.9, 1.1, "Industrials"],
+  "S63.SI": ["ST Engineering", 6.6, 0.7, "Industrials"],
+  "BN4.SI": ["Keppel", 7.1, 1.0, "Industrials"],
+  "U96.SI": ["Sembcorp Industries", 5.6, 1.1, "Utilities"],
+  "5E2.SI": ["Seatrium", 2.2, 1.5, "Industrials"],
+  "BS6.SI": ["Yangzijiang Shipbuilding", 2.5, 1.3, "Industrials"],
+  "S58.SI": ["SATS", 3.1, 1.2, "Industrials"],
+  "A17U.SI": ["CapitaLand Ascendas REIT", 2.7, 0.7, "Real Estate"],
+  "C38U.SI": ["CapitaLand Integrated Commercial Trust", 2.1, 0.7, "Real Estate"],
+  "M44U.SI": ["Mapletree Logistics Trust", 1.3, 0.75, "Real Estate"],
+  "N2IU.SI": ["Mapletree Pan Asia Commercial Trust", 1.25, 0.8, "Real Estate"],
+  "ME8U.SI": ["Mapletree Industrial Trust", 2.2, 0.7, "Real Estate"],
+  "9CI.SI": ["CapitaLand Investment", 2.7, 0.9, "Real Estate"],
+  "C09.SI": ["City Developments", 5.6, 1.0, "Real Estate"],
+  "U14.SI": ["UOL Group", 6.4, 0.9, "Real Estate"],
+  "F34.SI": ["Wilmar International", 3.1, 0.6, "Consumer Staples"],
+  "Y92.SI": ["Thai Beverage", 0.5, 0.7, "Consumer Staples"],
+  "G13.SI": ["Genting Singapore", 0.85, 1.2, "Consumer Discretionary"],
+  "V03.SI": ["Venture Corporation", 12.5, 1.0, "Technology"],
+};
+
+function buildUniverse() {
+  const universe = {};
+  for (const [symbol, [name, price, beta, sector]] of Object.entries(US_STOCKS)) {
+    universe[symbol] = { symbol, name, price, beta, sector, exchange: "US", currency: "USD" };
+  }
+  for (const [symbol, [name, price, beta, sector]] of Object.entries(SG_STOCKS)) {
+    universe[symbol] = { symbol, name, price, beta, sector, exchange: "SGX", currency: "SGD" };
+  }
+  return universe;
+}
+
+// ---------------------------------------------------------------------------
+// Market-data provider. A brokerage replaces this with its own implementation
+// backed by a live quotes/fundamentals API — the UI only talks to this shape.
+// ---------------------------------------------------------------------------
+export function createSampleProvider() {
+  const universe = buildUniverse();
+  const all = Object.values(universe);
+  return {
+    async searchSymbols(query) {
+      const q = query.trim().toUpperCase();
+      if (!q) return [];
+      const symbolHits = all.filter((s) => s.symbol.startsWith(q));
+      const nameHits = all.filter(
+        (s) => !s.symbol.startsWith(q) && s.name.toUpperCase().includes(q)
+      );
+      return [...symbolHits, ...nameHits].slice(0, 8);
+    },
+    async getQuote(symbol) {
+      const s = symbol.trim().toUpperCase();
+      return universe[s] || universe[`${s}.SI`] || null;
+    },
+  };
+}
+
+const defaultProvider = createSampleProvider();
+
+const SUGGESTION_SYSTEM_PROMPT = `You are a concise equity research assistant. The user trades through a brokerage with access to US-listed stocks (NYSE/NASDAQ) and Singapore-listed stocks (SGX — write SGX tickers with their .SI suffix, e.g. D05.SI). Given a user's portfolio details, return ONLY a valid JSON array of 4 stock suggestions. No preamble, no markdown, no backticks — raw JSON only. Each object must have exactly: ticker (string), company (string), action ("Buy" or "Hold"), risk_level ("Low", "Medium", or "High"), sector (string), rationale (string, 2 sentences max). Suggest stocks that complement or balance the portfolio — prioritise diversification, sector gaps, geographic balance across US and SGX, and appropriate risk level.`;
 
 // ---------------------------------------------------------------------------
 // Self-contained stylesheet — no Tailwind or external CSS required
@@ -111,10 +271,56 @@ const STYLES = `
 }
 .rk-input::placeholder { color: #64748B; font-weight: 400; text-transform: none; }
 .rk-input:focus { border-color: ${ACCENT}; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25); }
-.rk-input-ticker { width: 168px; text-transform: uppercase; }
+.rk-input-ticker { width: 240px; text-transform: uppercase; }
 .rk-input-qty { width: 96px; }
 .rk-input-qty::-webkit-outer-spin-button,
 .rk-input-qty::-webkit-inner-spin-button { -webkit-appearance: none; }
+
+.rk-search-wrap { position: relative; }
+.rk-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 340px;
+  max-width: 90vw;
+  max-height: 312px;
+  overflow-y: auto;
+  background: #151823;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  z-index: 40;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55);
+}
+.rk-dd-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 13px;
+  cursor: pointer;
+}
+.rk-dd-item.rk-dd-active { background: rgba(99, 102, 241, 0.14); }
+.rk-dd-sym { font-weight: 700; font-size: 13px; color: #E2E8F0; min-width: 66px; }
+.rk-dd-name {
+  flex: 1;
+  font-size: 12px;
+  color: #94A3B8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rk-dd-px { font-size: 12px; font-weight: 600; color: #CBD5E1; font-variant-numeric: tabular-nums; }
+.rk-dd-empty { padding: 14px; font-size: 13px; color: #64748B; text-align: center; }
+
+.rk-ex-badge {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  border-radius: 5px;
+  padding: 2px 6px;
+  flex-shrink: 0;
+}
+.rk-ex-us { background: rgba(99, 102, 241, 0.18); color: #A5B4FC; }
+.rk-ex-sgx { background: rgba(20, 184, 166, 0.16); color: #2DD4BF; }
 
 .rk-btn {
   background: ${ACCENT};
@@ -209,6 +415,9 @@ const STYLES = `
 .rk-table td { padding: 9px 0; border-top: 1px solid rgba(255, 255, 255, 0.06); }
 .rk-table td:first-child { font-weight: 600; color: #E2E8F0; }
 .rk-table td.rk-weight { font-weight: 500; color: #94A3B8; }
+.rk-table .rk-ex-badge { margin-left: 7px; }
+
+.rk-fx-note { margin-top: 12px; font-size: 11px; color: #64748B; }
 
 .rk-donut-wrap { display: flex; flex-direction: column; align-items: center; gap: 18px; }
 @media (min-width: 480px) { .rk-donut-wrap { flex-direction: row; } }
@@ -277,21 +486,19 @@ const STYLES = `
 `;
 
 // ---------------------------------------------------------------------------
-// Portfolio math
+// Portfolio math — all weights computed on USD values
 // ---------------------------------------------------------------------------
+function holdingValueUSD(h) {
+  return h.quote.price * (FX_TO_USD[h.quote.currency] || 1) * h.qty;
+}
+
 function computePortfolio(holdings) {
-  const totalValue = holdings.reduce(
-    (sum, h) => sum + STOCK_DATA[h.ticker].price * h.qty,
-    0
-  );
+  const totalValue = holdings.reduce((sum, h) => sum + holdingValueUSD(h), 0);
   const rows = holdings.map((h) => {
-    const { price, beta, sector } = STOCK_DATA[h.ticker];
-    const value = price * h.qty;
+    const value = holdingValueUSD(h);
     return {
-      ...h,
-      price,
-      beta,
-      sector,
+      ...h.quote,
+      qty: h.qty,
       value,
       weight: totalValue > 0 ? value / totalValue : 0,
     };
@@ -305,20 +512,25 @@ function computePortfolio(holdings) {
     .sort((a, b) => b.weight - a.weight);
 
   const topHolding = rows.reduce((a, b) => (b.weight > a.weight ? b : a), rows[0]);
+  const hasSGD = rows.some((r) => r.currency === "SGD");
 
-  return { rows, totalValue, portfolioBeta, sectors, topHolding };
+  return { rows, totalValue, portfolioBeta, sectors, topHolding, hasSGD };
 }
 
 function buildPortfolioSummary({ rows, totalValue, portfolioBeta, sectors, topHolding }) {
   const lines = [];
-  lines.push("My current stock portfolio:");
+  lines.push(
+    "My current stock portfolio (brokerage with access to US and SGX markets):"
+  );
   for (const r of rows) {
+    const ccy = r.currency === "SGD" ? "S$" : "$";
     lines.push(
-      `- ${r.ticker} x ${r.qty} shares @ $${r.price} = $${r.value.toLocaleString()} ` +
+      `- ${r.symbol} (${r.name}, ${r.exchange}) x ${r.qty} shares @ ${ccy}${r.price} ` +
+        `= US$${Math.round(r.value).toLocaleString()} ` +
         `(${(r.weight * 100).toFixed(1)}% of portfolio, beta ${r.beta}, sector ${r.sector})`
     );
   }
-  lines.push(`Total portfolio value: $${totalValue.toLocaleString()}`);
+  lines.push(`Total portfolio value: US$${Math.round(totalValue).toLocaleString()}`);
   lines.push(`Weighted portfolio beta vs S&P 500: ${portfolioBeta.toFixed(2)}`);
   lines.push(
     "Sector weights: " +
@@ -326,7 +538,7 @@ function buildPortfolioSummary({ rows, totalValue, portfolioBeta, sectors, topHo
   );
   if (topHolding.weight > 0.25) {
     lines.push(
-      `Concentration warning: ${topHolding.ticker} is ${(topHolding.weight * 100).toFixed(1)}% of the portfolio (over 25%).`
+      `Concentration warning: ${topHolding.symbol} is ${(topHolding.weight * 100).toFixed(1)}% of the portfolio (over 25%).`
     );
   }
   const topSector = sectors[0];
@@ -336,7 +548,7 @@ function buildPortfolioSummary({ rows, totalValue, portfolioBeta, sectors, topHo
     );
   }
   lines.push(
-    "Please suggest 4 stocks that would complement or balance this portfolio."
+    "Please suggest 4 stocks (US or SGX) that would complement or balance this portfolio."
   );
   return lines.join("\n");
 }
@@ -394,6 +606,113 @@ function CardTitle({ children, badge }) {
 function Toast({ message }) {
   if (!message) return null;
   return <div className="rk-toast">{message}</div>;
+}
+
+function ExchangeBadge({ exchange }) {
+  return (
+    <span className={`rk-ex-badge ${exchange === "SGX" ? "rk-ex-sgx" : "rk-ex-us"}`}>
+      {exchange}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Symbol search — async autocomplete against the market-data provider
+// ---------------------------------------------------------------------------
+function SymbolSearch({ provider, value, onChange, onSelect }) {
+  const [results, setResults] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!value.trim()) {
+      setResults([]);
+      setOpen(false);
+      return;
+    }
+    provider.searchSymbols(value).then((hits) => {
+      if (cancelled) return;
+      setResults(hits);
+      setHighlight(0);
+      setOpen(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [value, provider]);
+
+  useEffect(() => {
+    const close = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+
+  const pick = (quote) => {
+    setOpen(false);
+    onSelect(quote);
+  };
+
+  const onKeyDown = (e) => {
+    if (!open || results.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlight((i) => (i + 1) % results.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlight((i) => (i - 1 + results.length) % results.length);
+    } else if (e.key === "Enter") {
+      e.preventDefault(); // select instead of submitting the form
+      pick(results[highlight]);
+    } else if (e.key === "Escape") {
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div className="rk-search-wrap" ref={wrapRef}>
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={onKeyDown}
+        onFocus={() => results.length > 0 && setOpen(true)}
+        placeholder="Search ticker or company…"
+        className="rk-input rk-input-ticker"
+        aria-label="Search stock symbol"
+        autoComplete="off"
+      />
+      {open && (
+        <div className="rk-dropdown">
+          {results.length === 0 ? (
+            <p className="rk-dd-empty">No matches in US or SGX listings</p>
+          ) : (
+            results.map((q, i) => (
+              <div
+                key={q.symbol}
+                className={`rk-dd-item ${i === highlight ? "rk-dd-active" : ""}`}
+                onMouseEnter={() => setHighlight(i)}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  pick(q);
+                }}
+              >
+                <span className="rk-dd-sym">{q.symbol}</span>
+                <span className="rk-dd-name">{q.name}</span>
+                <ExchangeBadge exchange={q.exchange} />
+                <span className="rk-dd-px">
+                  {q.currency === "SGD" ? "S$" : "$"}
+                  {q.price.toLocaleString()}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -515,7 +834,7 @@ function ConcentrationDonut({ rows }) {
         <circle cx={c} cy={c} r={radius} fill="none" stroke="#ffffff0f" strokeWidth="22" />
         {segments.map((s) => (
           <circle
-            key={s.row.ticker}
+            key={s.row.symbol}
             cx={c}
             cy={c}
             r={radius}
@@ -537,9 +856,9 @@ function ConcentrationDonut({ rows }) {
       </svg>
       <ul className="rk-legend">
         {segments.map((s) => (
-          <li key={s.row.ticker}>
+          <li key={s.row.symbol}>
             <span className="rk-swatch" style={{ background: s.color }} />
-            <span className="rk-legend-ticker">{s.row.ticker}</span>
+            <span className="rk-legend-ticker">{s.row.symbol}</span>
             <span className="rk-legend-pct">{(s.row.weight * 100).toFixed(1)}%</span>
             {s.row.weight > 0.25 && <span className="rk-flag">&gt;25%</span>}
           </li>
@@ -628,7 +947,7 @@ function buildVerdict({ portfolioBeta, topHolding, sectors }) {
   }
   if (topHolding.weight > 0.25) {
     parts.push(
-      `${topHolding.ticker} alone is ${(topHolding.weight * 100).toFixed(0)}% of your holdings — a single-name shock would hit hard.`
+      `${topHolding.symbol} alone is ${(topHolding.weight * 100).toFixed(0)}% of your holdings — a single-name shock would hit hard.`
     );
   }
   if (parts.length === 1) {
@@ -665,6 +984,7 @@ function SuggestionCard({ suggestion }) {
     <div className="rk-sugg-card">
       <div className="rk-sugg-tags">
         <span className="rk-tag-ticker">{ticker}</span>
+        {ticker.endsWith(".SI") && <ExchangeBadge exchange="SGX" />}
         <span
           className="rk-tag"
           style={{
@@ -692,14 +1012,36 @@ function SuggestionCard({ suggestion }) {
 // ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
-export default function Riskometer() {
+export default function Riskometer({
+  provider = defaultProvider,
+  initialHoldings = [],
+}) {
   const [holdings, setHoldings] = useState([]);
-  const [tickerInput, setTickerInput] = useState("");
+  const [searchInput, setSearchInput] = useState("");
   const [qtyInput, setQtyInput] = useState("");
   const [toast, setToast] = useState("");
   const [suggestions, setSuggestions] = useState(null);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [suggestionError, setSuggestionError] = useState("");
+  const qtyRef = useRef(null);
+
+  // Hydrate positions handed over by the host brokerage UI.
+  useEffect(() => {
+    if (!initialHoldings.length) return;
+    let cancelled = false;
+    (async () => {
+      const resolved = [];
+      for (const h of initialHoldings.slice(0, MAX_HOLDINGS)) {
+        const quote = await provider.getQuote(h.symbol);
+        if (quote) resolved.push({ symbol: quote.symbol, qty: h.qty, quote });
+      }
+      if (!cancelled) setHoldings(resolved);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!toast) return;
@@ -712,37 +1054,42 @@ export default function Riskometer() {
     [holdings]
   );
 
+  const insertHolding = useCallback((quote, qty) => {
+    setHoldings((prev) => {
+      const existing = prev.find((h) => h.symbol === quote.symbol);
+      if (existing) {
+        return prev.map((h) =>
+          h.symbol === quote.symbol ? { ...h, qty: h.qty + qty } : h
+        );
+      }
+      if (prev.length >= MAX_HOLDINGS) {
+        setToast(`Maximum ${MAX_HOLDINGS} stocks`);
+        return prev;
+      }
+      return [...prev, { symbol: quote.symbol, qty, quote }];
+    });
+  }, []);
+
   const addHolding = useCallback(
-    (e) => {
+    async (e) => {
       e.preventDefault();
-      const ticker = tickerInput.trim().toUpperCase();
+      const query = searchInput.trim();
       const qty = Math.floor(Number(qtyInput));
-      if (!ticker || !qty || qty <= 0) return;
-      if (!STOCK_DATA[ticker]) {
-        setToast("Ticker not found");
+      if (!query || !qty || qty <= 0) return;
+      const quote = await provider.getQuote(query);
+      if (!quote) {
+        setToast("Symbol not found — try the search dropdown");
         return;
       }
-      setHoldings((prev) => {
-        const existing = prev.find((h) => h.ticker === ticker);
-        if (existing) {
-          return prev.map((h) =>
-            h.ticker === ticker ? { ...h, qty: h.qty + qty } : h
-          );
-        }
-        if (prev.length >= MAX_HOLDINGS) {
-          setToast(`Maximum ${MAX_HOLDINGS} stocks`);
-          return prev;
-        }
-        return [...prev, { ticker, qty }];
-      });
-      setTickerInput("");
+      insertHolding(quote, qty);
+      setSearchInput("");
       setQtyInput("");
     },
-    [tickerInput, qtyInput]
+    [searchInput, qtyInput, provider, insertHolding]
   );
 
-  const removeHolding = useCallback((ticker) => {
-    setHoldings((prev) => prev.filter((h) => h.ticker !== ticker));
+  const removeHolding = useCallback((symbol) => {
+    setHoldings((prev) => prev.filter((h) => h.symbol !== symbol));
   }, []);
 
   const getSuggestions = useCallback(async () => {
@@ -775,7 +1122,7 @@ export default function Riskometer() {
             <span style={{ color: ACCENT }}>Risk</span>ometer
           </h1>
           <p className="rk-subtitle">
-            Understand your portfolio's risk relative to the market.
+            Understand your portfolio's risk relative to the market · US &amp; SGX listings
           </p>
         </header>
 
@@ -783,16 +1130,18 @@ export default function Riskometer() {
         <Card style={{ marginBottom: 22 }}>
           <CardTitle>Portfolio</CardTitle>
           <form onSubmit={addHolding} className="rk-form">
-            <input
-              value={tickerInput}
-              onChange={(e) => setTickerInput(e.target.value)}
-              placeholder="Ticker (e.g. NVDA)"
-              className="rk-input rk-input-ticker"
-              maxLength={6}
-              aria-label="Ticker symbol"
+            <SymbolSearch
+              provider={provider}
+              value={searchInput}
+              onChange={setSearchInput}
+              onSelect={(quote) => {
+                setSearchInput(quote.symbol);
+                qtyRef.current && qtyRef.current.focus();
+              }}
             />
             <span style={{ color: "#64748B" }}>×</span>
             <input
+              ref={qtyRef}
               value={qtyInput}
               onChange={(e) => setQtyInput(e.target.value)}
               placeholder="Qty"
@@ -814,12 +1163,12 @@ export default function Riskometer() {
           {holdings.length > 0 && (
             <div className="rk-chips">
               {holdings.map((h) => (
-                <span key={h.ticker} className="rk-chip">
-                  {h.ticker}
+                <span key={h.symbol} className="rk-chip">
+                  {h.symbol}
                   <span className="rk-chip-qty">× {h.qty}</span>
                   <button
-                    onClick={() => removeHolding(h.ticker)}
-                    aria-label={`Remove ${h.ticker}`}
+                    onClick={() => removeHolding(h.symbol)}
+                    aria-label={`Remove ${h.symbol}`}
                     className="rk-chip-x"
                   >
                     ✕
@@ -835,7 +1184,9 @@ export default function Riskometer() {
           <div className="rk-empty">
             <p className="rk-empty-icon">📊</p>
             <p className="rk-empty-main">Add your stocks to see your risk profile</p>
-            <p className="rk-empty-hint">Try NVDA, AAPL, MSFT, TSLA…</p>
+            <p className="rk-empty-hint">
+              Search any US or SGX listing — try NVDA, AAPL, DBS, Singtel…
+            </p>
           </div>
         )}
 
@@ -857,7 +1208,7 @@ export default function Riskometer() {
                     {portfolio.portfolioBeta.toFixed(2)}
                   </span>
                   <span className="rk-beta-meta">
-                    weighted avg · ${portfolio.totalValue.toLocaleString()} total
+                    weighted avg · US${Math.round(portfolio.totalValue).toLocaleString()} total
                   </span>
                 </div>
                 <table className="rk-table">
@@ -870,8 +1221,11 @@ export default function Riskometer() {
                   </thead>
                   <tbody>
                     {portfolio.rows.map((r) => (
-                      <tr key={r.ticker}>
-                        <td>{r.ticker}</td>
+                      <tr key={r.symbol}>
+                        <td>
+                          {r.symbol}
+                          <ExchangeBadge exchange={r.exchange} />
+                        </td>
                         <td
                           className="rk-num"
                           style={{
@@ -888,6 +1242,11 @@ export default function Riskometer() {
                     ))}
                   </tbody>
                 </table>
+                {portfolio.hasSGD && (
+                  <p className="rk-fx-note">
+                    SGX values converted at 1 SGD = US${FX_TO_USD.SGD}
+                  </p>
+                )}
               </Card>
 
               {/* Concentration */}
@@ -896,7 +1255,7 @@ export default function Riskometer() {
                   badge={
                     concentrated ? (
                       <span className="rk-flag">
-                        ⚠ {portfolio.topHolding.ticker} exceeds 25%
+                        ⚠ {portfolio.topHolding.symbol} exceeds 25%
                       </span>
                     ) : null
                   }
@@ -955,7 +1314,7 @@ export default function Riskometer() {
                 <div>
                   <h3 className="rk-card-title">AI Stock Suggestions</h3>
                   <p className="rk-sugg-sub">
-                    Powered by Claude · based on your beta, sectors and concentration
+                    Powered by Claude · US &amp; SGX ideas based on your beta, sectors and concentration
                   </p>
                 </div>
                 <button
@@ -998,7 +1357,9 @@ export default function Riskometer() {
           </>
         )}
 
-        <footer className="rk-footer">Mock data · not investment advice</footer>
+        <footer className="rk-footer">
+          Sample prices &amp; betas · connect a live market-data provider for production · not investment advice
+        </footer>
       </div>
     </div>
   );
