@@ -48,13 +48,18 @@ export function createLiveProvider(baseUrl = "/api") {
   };
 }
 
-// Auto-detect whether the proxy is running; if so, use live data.
+// Auto-detect whether the proxy is running.
+// Tries the Vite proxy path first (/api), then the direct port as a fallback
+// — so it works whether or not a vite.config.js proxy is configured.
 async function detectProvider() {
-  try {
-    const r = await fetch("/api/quote/AAPL");
-    if (r.ok) return createLiveProvider();
-  } catch {
-    // proxy not running — fall through to sample data
+  const candidates = ["/api", "http://localhost:3001/api"];
+  for (const base of candidates) {
+    try {
+      const r = await fetch(`${base}/quote/AAPL`);
+      if (r.ok) return createLiveProvider(base);
+    } catch {
+      // try next
+    }
   }
   return null;
 }
