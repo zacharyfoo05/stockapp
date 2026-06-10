@@ -3,21 +3,61 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 // ---------------------------------------------------------------------------
 // Riskometer — portfolio risk dashboard, designed as a brokerage add-on.
 //
-// Embed it with your own market-data feed:
+// LIVE DATA (US + SGX via Yahoo Finance proxy):
+//   1. npm install && node server.js   (starts proxy on :3001)
+//   2. The component detects the proxy automatically — no code changes needed.
 //
+// BROKERAGE INTEGRATION — inject your own feed:
 //   <Riskometer
 //     provider={myBrokerageProvider}        // implements searchSymbols/getQuote
-//     initialHoldings={[{ symbol: "AAPL", qty: 10 }]}  // user's live positions
+//     initialHoldings={[{ symbol: "AAPL", qty: 10 }]}
 //   />
 //
-// A provider implements:
-//   searchSymbols(query) -> Promise<Quote[]>   (symbol/name search, ranked)
+// Provider shape:
+//   searchSymbols(query) -> Promise<Quote[]>
 //   getQuote(symbol)     -> Promise<Quote|null>
-// where Quote = { symbol, name, price, beta, sector, exchange, currency }
+// Quote = { symbol, name, price, beta, sector, exchange, currency }
 //
-// Without props it falls back to the built-in sample dataset below
-// (major US + SGX listings with static prices/betas).
+// Falls back to the built-in static dataset when no proxy/provider is set.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Live provider — calls the local Node proxy (server.js)
+// Covers all US (NYSE/NASDAQ) and SGX (.SI) stocks via Yahoo Finance.
+// ---------------------------------------------------------------------------
+export function createLiveProvider(baseUrl = "/api") {
+  return {
+    async searchSymbols(query) {
+      try {
+        const r = await fetch(`${baseUrl}/search?q=${encodeURIComponent(query)}`);
+        if (!r.ok) return [];
+        return await r.json();
+      } catch {
+        return [];
+      }
+    },
+    async getQuote(symbol) {
+      try {
+        const r = await fetch(`${baseUrl}/quote/${encodeURIComponent(symbol)}`);
+        if (!r.ok) return null;
+        return await r.json();
+      } catch {
+        return null;
+      }
+    },
+  };
+}
+
+// Auto-detect whether the proxy is running; if so, use live data.
+async function detectProvider() {
+  try {
+    const r = await fetch("/api/quote/AAPL");
+    if (r.ok) return createLiveProvider();
+  } catch {
+    // proxy not running — fall through to sample data
+  }
+  return null;
+}
 
 const ACCENT = "#6366F1";
 const TEAL = "#14B8A6";
@@ -1013,9 +1053,11 @@ function SuggestionCard({ suggestion }) {
 // App
 // ---------------------------------------------------------------------------
 export default function Riskometer({
-  provider = defaultProvider,
+  provider: providerProp = null,
   initialHoldings = [],
 }) {
+  const [activeProvider, setActiveProvider] = useState(providerProp || defaultProvider);
+  const [liveMode, setLiveMode] = useState(false);
   const [holdings, setHoldings] = useState([]);
   const [searchInput, setSearchInput] = useState("");
   const [qtyInput, setQtyInput] = useState("");
@@ -1023,6 +1065,17 @@ export default function Riskometer({
   const [suggestions, setSuggestions] = useState(null);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [suggestionError, setSuggestionError] = useState("");
+
+  // Auto-detect live proxy on mount (unless caller passed an explicit provider)
+  useEffect(() => {
+    if (providerProp) return;
+    detectProvider().then((live) => {
+      if (live) {
+        setActiveProvider(live);
+        setLiveMode(true);
+      }
+    });
+  }, [providerProp]);
   const qtyRef = useRef(null);
 
   // Hydrate positions handed over by the host brokerage UI.
@@ -1032,7 +1085,7 @@ export default function Riskometer({
     (async () => {
       const resolved = [];
       for (const h of initialHoldings.slice(0, MAX_HOLDINGS)) {
-        const quote = await provider.getQuote(h.symbol);
+        const quote = await activeProvider.getQuote(h.symbol);
         if (quote) resolved.push({ symbol: quote.symbol, qty: h.qty, quote });
       }
       if (!cancelled) setHoldings(resolved);
@@ -1076,7 +1129,7 @@ export default function Riskometer({
       const query = searchInput.trim();
       const qty = Math.floor(Number(qtyInput));
       if (!query || !qty || qty <= 0) return;
-      const quote = await provider.getQuote(query);
+      const quote = await activeProvider.getQuote(query);
       if (!quote) {
         setToast("Symbol not found — try the search dropdown");
         return;
@@ -1085,7 +1138,7 @@ export default function Riskometer({
       setSearchInput("");
       setQtyInput("");
     },
-    [searchInput, qtyInput, provider, insertHolding]
+    [searchInput, qtyInput, activeProvider, insertHolding]
   );
 
   const removeHolding = useCallback((symbol) => {
@@ -1123,6 +1176,21 @@ export default function Riskometer({
           </h1>
           <p className="rk-subtitle">
             Understand your portfolio's risk relative to the market · US &amp; SGX listings
+            {liveMode && (
+              <span style={{
+                marginLeft: 10,
+                background: "rgba(20,184,166,0.15)",
+                color: "#2DD4BF",
+                borderRadius: 6,
+                padding: "2px 8px",
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: "0.05em",
+                verticalAlign: "middle",
+              }}>
+                ● LIVE
+              </span>
+            )}
           </p>
         </header>
 
@@ -1131,7 +1199,7 @@ export default function Riskometer({
           <CardTitle>Portfolio</CardTitle>
           <form onSubmit={addHolding} className="rk-form">
             <SymbolSearch
-              provider={provider}
+              provider={activeProvider}
               value={searchInput}
               onChange={setSearchInput}
               onSelect={(quote) => {
@@ -1358,7 +1426,9 @@ export default function Riskometer({
         )}
 
         <footer className="rk-footer">
-          Sample prices &amp; betas · connect a live market-data provider for production · not investment advice
+          {liveMode
+            ? "Live prices via Yahoo Finance · not investment advice"
+            : "Sample prices & betas · run node server.js for live data · not investment advice"}
         </footer>
       </div>
     </div>

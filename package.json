@@ -1,0 +1,19 @@
+{
+  "name": "riskometer-server",
+  "version": "1.0.0",
+  "description": "Market-data proxy for Riskometer",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "server": "node server.js",
+    "dev": "concurrently \"npm run server\" \"vite\""
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.3",
+    "yahoo-finance2": "^2.11.3"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
