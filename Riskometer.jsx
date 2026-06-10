@@ -49,13 +49,12 @@ export function createLiveProvider(baseUrl = "/api") {
 }
 
 // Auto-detect whether the proxy is running.
-// Tries the Vite proxy path first (/api), then the direct port as a fallback
-// — so it works whether or not a vite.config.js proxy is configured.
+// Uses /api/health (instant, no Yahoo call) so rate-limits never block the check.
 async function detectProvider() {
   const candidates = ["/api", "http://localhost:3001/api"];
   for (const base of candidates) {
     try {
-      const r = await fetch(`${base}/quote/AAPL`);
+      const r = await fetch(`${base}/health`);
       if (r.ok) return createLiveProvider(base);
     } catch {
       // try next

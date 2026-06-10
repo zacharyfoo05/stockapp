@@ -26,10 +26,18 @@ const YF_HEADERS = {
   Accept: "application/json",
 };
 
+// Fetch with automatic retry on 429 (rate-limit) — waits 2 s then 5 s.
 async function yfJson(url) {
-  const r = await fetch(url, { headers: YF_HEADERS });
-  if (!r.ok) throw new Error(`Yahoo responded ${r.status}`);
-  return r.json();
+  const delays = [2000, 5000];
+  for (let attempt = 0; ; attempt++) {
+    const r = await fetch(url, { headers: YF_HEADERS });
+    if (r.ok) return r.json();
+    if (r.status === 429 && attempt < delays.length) {
+      await new Promise((res) => setTimeout(res, delays[attempt]));
+      continue;
+    }
+    throw new Error(`Yahoo responded ${r.status}`);
+  }
 }
 
 // Simple in-memory cache with TTL
@@ -178,6 +186,9 @@ async function enrichSymbol(symbol, { withBeta = true } = {}) {
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
+
+// GET /api/health — instant liveness check, never hits Yahoo
+app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 // GET /api/search?q=<query> — up to 8 matches with live prices
 app.get("/api/search", async (req, res) => {
