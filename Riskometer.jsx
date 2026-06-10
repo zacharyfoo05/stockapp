@@ -26,8 +26,9 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 // Covers all US (NYSE/NASDAQ) and SGX (.SI) stocks via Yahoo Finance.
 // ---------------------------------------------------------------------------
 export function createLiveProvider(baseUrl = "/api") {
-  // Always fall back to static data so search always shows results,
-  // even when Yahoo Finance rate-limits or the proxy has an error.
+  // Falls back to the static dataset if Yahoo is unreachable — but marks
+  // those quotes stale so the UI can warn instead of silently showing
+  // outdated prices.
   const fallback = createSampleProvider();
   return {
     async searchSymbols(query) {
@@ -40,7 +41,9 @@ export function createLiveProvider(baseUrl = "/api") {
       } catch {
         // fall through
       }
-      return fallback.searchSymbols(query);
+      const sample = await fallback.searchSymbols(query);
+      // Hide static prices in live mode — they may be outdated
+      return sample.map((q) => ({ ...q, price: null }));
     },
     async getQuote(symbol) {
       try {
@@ -52,7 +55,8 @@ export function createLiveProvider(baseUrl = "/api") {
       } catch {
         // fall through
       }
-      return fallback.getQuote(symbol);
+      const sample = await fallback.getQuote(symbol);
+      return sample ? { ...sample, stale: true } : null;
     },
   };
 }
@@ -685,14 +689,18 @@ function SymbolSearch({ provider, value, onChange, onSelect }) {
       setOpen(false);
       return;
     }
-    provider.searchSymbols(value).then((hits) => {
-      if (cancelled) return;
-      setResults(hits);
-      setHighlight(0);
-      setOpen(true);
-    });
+    // Debounce so we don't fire a request per keystroke (Yahoo rate-limits)
+    const t = setTimeout(() => {
+      provider.searchSymbols(value).then((hits) => {
+        if (cancelled) return;
+        setResults(hits);
+        setHighlight(0);
+        setOpen(true);
+      });
+    }, 300);
     return () => {
       cancelled = true;
+      clearTimeout(t);
     };
   }, [value, provider]);
 
@@ -755,10 +763,12 @@ function SymbolSearch({ provider, value, onChange, onSelect }) {
                 <span className="rk-dd-sym">{q.symbol}</span>
                 <span className="rk-dd-name">{q.name}</span>
                 <ExchangeBadge exchange={q.exchange} />
-                <span className="rk-dd-px">
-                  {q.currency === "SGD" ? "S$" : "$"}
-                  {q.price.toLocaleString()}
-                </span>
+                {q.price != null && (
+                  <span className="rk-dd-px">
+                    {q.currency === "SGD" ? "S$" : "$"}
+                    {q.price.toLocaleString()}
+                  </span>
+                )}
               </div>
             ))
           )}
@@ -1146,6 +1156,9 @@ export default function Riskometer({
       if (!quote) {
         setToast("Symbol not found — try the search dropdown");
         return;
+      }
+      if (quote.stale) {
+        setToast(`Live quote unavailable for ${quote.symbol} — using sample price`);
       }
       insertHolding(quote, qty);
       setSearchInput("");
